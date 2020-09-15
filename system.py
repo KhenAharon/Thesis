@@ -19,86 +19,58 @@ class Transition:
 
 
 class process:
-    # finite automata where transitions can be shared with other processes.
-    
+    # finite automaton where transitions can be shared with other processes.
     def __init__(self, name, states=[], internal=[], shared=[], initial_state=None, update_states=[]):
         self.name = name
-        
-        # list with names of the states.
-        self.states = states 
-        
-        # internal and shared are lists of transitions.
-        # internal are transitions that are specific to the process.
-        # shared are transitions that two processes have in common.
-        # they will usually be initialized empty and filled using add_transition.
-        self.internal = internal
-        self.shared = shared
-        
-        # initial and current state, initially the same.
+        self.states = states  # list of names of the states.
         self.initial_state = initial_state
         self.current_state = initial_state
-        
-        # same as internal and shared, but these are only the names of the transitions.
-        # initialized as empty lists that will be filled using list_transitions.
-        self.internal_transitions = []
-        self.shared_transitions = []
-        
-        # all_transitions will be updated as the concatenation of the two previous lists.
-        self.all_transitions = []
-        
-        # marked states on which a learning pass can be done;
-        # if empty, will be defined as all the states with the function reinitialize.
-        self.update_states = update_states
+        self.internal = internal  # transitions that are specific to the process.
+        self.shared = shared  # transitions of both processes, initialized empty and filled by add_transition.
+        self.internal_transitions = []  # same as above, but the names of the transitions.
+        self.shared_transitions = []  # initialized as empty lists that will be filled using list_transitions.
+        self.all_transitions = []  # all_transitions will be updated as the concatenation of the two previous lists.
+        self.update_states = update_states  # only states on which a learning pass can be done. empty = all states.
 
     def add_state(self, name):
         self.states.append(name)
-        # make the added state initial and current if they are undefined.
         if self.current_state is None:
             self.initial_state = name
             self.current_state = name
             
     def define_update_state(self, name):
-        # new update possible state, if it is a valid state of the process.
         if name not in self.states:
             raise ValueError("no state named", name)
         else:
-            self.update_states.append(name)
+            self.update_states.append(name)  # new update possible state, if it is a valid state of the process.
             
     def list_update_states(self, name_list):
-        # define a list of update possible states.
         for name in name_list:
-            self.define_update_state(name)
+            self.define_update_state(name)  # define a list of update possible states.
             
     def reinitialize(self):
-        # return to initial state.
-        self.current_state = self.initial_state
-        # if list of update states is not defined, all states will be updated.
-        if self.update_states is []:
+        self.current_state = self.initial_state  # return to initial state.
+        if self.update_states is []:  # if list of update states is undefined, all states will be updated.
             self.list_update_states(self.states)
             
     def add_transition(self, name, start, end, internal=True):
-        # add a new transition from state start to state end.
         if internal:
-            self.internal.append(Transition(name, start, end))
+            self.internal.append(Transition(name, start, end))  # add a new transition from state start to state end.
         else:
             self.shared.append(Transition(name, start, end))
         
     def trigger_transition(self, tr_name):
-        # move the process according to the transition tr_name, printing an error if not possible.
-        # we trigger it in internal, but if not exist, in shared.
-        try:
+        try:  # move the process according to the transition tr_name, printing an error if not possible.
             self.current_state = next(tr.end for tr in self.internal if tr_name == tr.name and tr.start == self.current_state)
         except StopIteration:
-            try:
+            try:  # we trigger it in internal, but if not exist, in shared.
                 self.current_state = next(tr.end for tr in self.shared if tr_name == tr.name and tr.start == self.current_state)
             except StopIteration:
                 print("No transition named", tr_name, "from state", self.current_state)
       
     def list_transitions(self):
-        # update internal_transitions, shared_transitions, and all_transitions with
-        # the names of currently defined transitions.
         for tr in self.internal:
-            if tr.name not in self.internal_transitions:
+            if tr.name not in self.internal_transitions:  # update the names of currently defined transitions.
                 self.internal_transitions.append(tr.name)
         for tr in self.shared:
             if tr.name not in self.shared_transitions:
@@ -106,12 +78,11 @@ class process:
         self.all_transitions = self.internal_transitions + self.shared_transitions
         
     def available_transitions(self):
-        # returns a list of names of transitions that can be triggered in the current state.
         available = []
         for tr in self.internal + self.shared:
             if tr.name not in available and tr.start == self.current_state:
                 available.append(tr.name)
-        return available
+        return available  # returns a list of names of transitions that can be triggered in the current state.
 
 
 class System:
