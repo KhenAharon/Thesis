@@ -86,35 +86,25 @@ class process:
 
 
 class System:
-    # a system is a compound of processes.
-    def __init__(self, name, processes):
+    def __init__(self, name, processes):  # a system is a compound of processes.
         self.name = name
-        # a list of the processes in the compound.
-        self.processes = processes
-        
-        # list of the shared transitions of the different processes
-        self.shared_transitions = []
-        
-        # Neural networks associated to the processes (listed in the same order as the processes)
-        # R, bias, parameters and trainer are respective lists of the parameters for the NNs
-        self.networks = None
-        self.R = None
+        self.processes = processes  # a list of the processes in the compound.
+        self.shared_transitions = []  # list of the shared transitions of the different processes
+        self.networks = None  # Neural networks associated to the processes (listed in the same order as the processes)
+        self.R = None  # R, bias, parameters and trainer are respective lists of the parameters for the NNs
         self.bias = None
         self.parameters = None
         self.trainer = None
         
     def reinitialize(self):
-        # reinitialize all processes in the system
-        for pr in self.processes:
+        for pr in self.processes:  # reinitialize all processes in the system
             pr.reinitialize()
     
-    def get_process(self, name):
-        # returns the process with that name
+    def get_process(self, name):  # returns the process with that name
         return next(proc for proc in self.processes if name == proc.name)
     
     def add_process(self, process):
-        # add a new process to the system
-        self.processes.append(process)
+        self.processes.append(process)  # add a new process to the system
         
     def add_transition(self, name, pr_list, start_list, end_list):
         # add a new transition shared between processes in pr_list
@@ -134,19 +124,14 @@ class System:
 
 
 class plant_environment(System):
-    # a specific kind of system with only two processes called the plant and the environment
-    # these correspond respectively to the system and environment from the paper
-    # only the plant will be using a neural network
     def __init__(self, name, plant: process, environment: process, model="correctly_guess", layers=1, hidden_dim=5):
-        # define the system with processes plant and environment
-        self.plant = plant
+        self.plant = plant  # define the system with processes plant and environment
         self.environment = environment
         System.__init__(self, name, [self.plant, self.environment])
-        
         self.plant.list_transitions()
-        
-        # parameters of the neural network that will be used by the plant
-        self.layers = layers
+        self.environment.list_transitions()  # @added
+
+        self.layers = layers  # parameters of the neural network that will be used by the plant
         self.hidden_dim = hidden_dim
         self.model = model
 
@@ -157,23 +142,40 @@ class plant_environment(System):
         # create an RNN using the parameters of the system, with the VanillaLSTMBuilder
         # from DyNet, and a SimpleSGDTrainer, with input structure defined above
         self.plant.list_transitions()
+        self.environment.list_transitions()  # @added
+
         self.parameters = dy.ParameterCollection()
+        self.parameters2 = dy.ParameterCollection()  # @added
+
         input_dim = (len(self.plant.internal_transitions)+len(self.plant.shared_transitions))*len(self.plant.states)
         output_dim = len(self.plant.all_transitions)
+
+        input_dim2 = (len(self.environment.internal_transitions)+len(self.environment.shared_transitions))*len(self.environment.states)
+        output_dim2 = len(self.environment.all_transitions)
+
         self.R = self.parameters.add_parameters((output_dim,self.hidden_dim))
         self.bias = self.parameters.add_parameters((output_dim))
         self.network = dy.VanillaLSTMBuilder(self.layers,input_dim,self.hidden_dim,self.parameters,forget_bias = 1.0)
-        # self.network = dy.SimpleRNNBuilder(self.layers,input_dim,self.hidden_dim,self.parameters)
         self.trainer = dy.SimpleSGDTrainer(self.parameters)
+
+        self.R2 = self.parameters2.add_parameters((output_dim2, self.hidden_dim))
+        self.bias2 = self.parameters2.add_parameters((output_dim2))
+        self.network2 = dy.VanillaLSTMBuilder(self.layers, input_dim2, self.hidden_dim, self.parameters2, forget_bias=1.0)
+        self.trainer2 = dy.SimpleSGDTrainer(self.parameters2)
     
-    def RNN_input(self, last_transition):
+    def RNN_input(self, last_transition, is_plant=True):
         # converts the last transition that was triggered into a valid input for the LSTM
         # if there was no previous transition (first step), everything is put to 0
         # else the input is modified to put +1 or -1 in the entry corresponding
         # to the last transition and the current state, depending on the success/failure
         # of the last transition
-        v = [0]*((len(self.plant.internal_transitions)+len(self.plant.shared_transitions))*len(self.plant.states))
-        i = next(i for i in range(len(self.plant.states)) if self.plant.states[i] == self.plant.current_state)
+        if is_plant:
+            v = [0]*((len(self.plant.internal_transitions)+len(self.plant.shared_transitions))*len(self.plant.states))
+            i = next(i for i in range(len(self.plant.states)) if self.plant.states[i] == self.plant.current_state)
+        else:
+            v = [0]*((len(self.environment.internal_transitions)+len(self.environment.shared_transitions))*len(self.environment.states))
+            i = next(i for i in range(len(self.environment.states)) if self.environment.states[i] == self.environment.current_state)
+
         if last_transition == None:
             pass
         else:
@@ -183,44 +185,75 @@ class plant_environment(System):
                 while last_transition[current_char_index] != ")":
                         failed_action += last_transition[current_char_index]
                         current_char_index += 1
-                j = next(j for j in range(len(self.plant.shared_transitions)) if failed_action == self.plant.shared_transitions[j])
-                v[((len(self.plant.internal_transitions) + j))*len(self.plant.states)+i] = -1    
+                if is_plant:
+                    j = next(j for j in range(len(self.plant.shared_transitions)) if failed_action == self.plant.shared_transitions[j])
+                    v[((len(self.plant.internal_transitions) + j))*len(self.plant.states)+i] = -1
+                else:
+                    j = next(j for j in range(len(self.environment.shared_transitions)) if failed_action == self.environment.shared_transitions[j])
+                    v[((len(self.environment.internal_transitions) + j))*len(self.environment.states)+i] = -1
             else:
-                j = next(j for j in range(len(self.plant.all_transitions)) if last_transition == self.plant.all_transitions[j])
-                v[(len(self.plant.internal_transitions) + j)*len(self.plant.states)+i] = 1
+                if is_plant:
+                    j = next(j for j in range(len(self.plant.all_transitions)) if last_transition == self.plant.all_transitions[j])
+                    v[(len(self.plant.internal_transitions) + j)*len(self.plant.states)+i] = 1
+                else:
+                    j = next(j for j in range(len(self.environment.all_transitions)) if last_transition == self.environment.all_transitions[j])
+                    v[(len(self.environment.internal_transitions) + j)*len(self.environment.states)+i] = 1
         return v       
         
 
         
 # Three different ways to interpret the output : softmax passes the output of the network through a softmax to interpret it as a probability distribution over the transitions, argmax chooses the transition with highest value of the output, random interprets the output directly as a distribution (usually using random).       
         
-    def RNN_output(self,output,method = "random", print_probs = False):
+    def RNN_output(self,output,method = "random", print_probs = False, is_plant=True):
         #this takes as input the output from the RNN, and returns the next transition
         #to trigger according to the chosen method for interpreting the output
         #the transition is guaranteed to be available to the plant in the current state
         
         next_transition = ""
-        
-        available = self.plant.available_transitions()
+        if is_plant:
+            available = self.plant.available_transitions()
+        else:
+            available = self.environment.available_transitions()
+
         if method == "softmax":
-            output = softmax([output[i] for i,tr in enumerate(self.plant.all_transitions) if tr in available])
+            if is_plant:
+                output = softmax([output[i] for i,tr in enumerate(self.plant.all_transitions) if tr in available])
+            else:
+                output = softmax([output[i] for i,tr in enumerate(self.environment.all_transitions) if tr in available])
+
             next_transition = random.choices(available,output)[0]
             if print_probs and len(output) >1:
                 print(([(output[i]) for i in range(len(output))]))
         if method == "argmax":
             max_value = -float("inf")
             max_index = -1
-            for i,tr in enumerate(self.plant.all_transitions):
-                if tr in available:
-                    if output[i] > max_value:
-                        max_value = output[i]
-                        max_index = i
-            next_transition = self.plant.all_transitions[max_index]
+            if is_plant:
+                for i,tr in enumerate(self.plant.all_transitions):
+                    if tr in available:
+                        if output[i] > max_value:
+                            max_value = output[i]
+                            max_index = i
+                next_transition = self.plant.all_transitions[max_index]
+            else:
+                for i, tr in enumerate(self.environment.all_transitions):
+                    if tr in available:
+                        if output[i] > max_value:
+                            max_value = output[i]
+                            max_index = i
+                next_transition = self.environment.all_transitions[max_index]
+
         elif method == "random":
-            next_transition = random.choices(available,([output[i] for i,tr in enumerate(self.plant.all_transitions) if tr in available]))[0]
+            if is_plant:
+                next_transition = random.choices(available,([output[i] for i,tr in enumerate(self.plant.all_transitions) if tr in available]))[0]
+            else:
+                next_transition = random.choices(available,([output[i] for i,tr in enumerate(self.environment.all_transitions) if tr in available]))[0]
             
             if print_probs and len(available) >1:
-                print(([(tr,output[i]) for i,tr in enumerate(self.plant.all_transitions) if tr in available]))
+                if is_plant:
+                    print(([(tr,output[i]) for i,tr in enumerate(self.plant.all_transitions) if tr in available]))
+                else:
+                    print(([(tr,output[i]) for i,tr in enumerate(self.environment.all_transitions) if tr in available]))
+
         if print_probs and len(available) >1:
             pass
             #print("choice:",next_transition)
@@ -230,35 +263,48 @@ class plant_environment(System):
     
 
  
-    def check_transition(self,plant_transition,environment_transition = None,environment_strategy = None):
+    def check_transition(self,some_transition,environment_transition = None,some_strategy = None, is_plant_transition=True): # strategy was env_strateg, some_transition was plant_transition
         
         #given a transition proposed by the plant, check if the environment can comply
         #return a pair [p,e] where:
         #if environment complies, p = e = plant_transition
         #else, p = fail(plant_transition) and e is a random transition available to the environment
         #possibility to use a specific strategy for the environment instead of a random choice
-        
-        available = self.environment.available_transitions()
-        if plant_transition in available:
-            return [plant_transition,plant_transition]
+
+        if is_plant_transition:
+            available = self.environment.available_transitions()
         else:
-            if environment_strategy == None:
-                return ["fail("+plant_transition+")",random.choice(available)]
+            available = self.plant.available_transitions()
+
+        if some_transition in available:
+            return [some_transition,some_transition]
+        else:
+            if some_strategy == None:
+                return ["fail("+some_transition+")",random.choice(available)]
             else:
-                return["fail("+plant_transition+")",environment_strategy(self.environment)]
-        
+                if is_plant_transition:
+                    return["fail("+some_transition+")",some_strategy(self.environment)]
+                return["fail("+some_transition+")",some_strategy(self.plant)]
 
 
 
-    
-    def trigger_transition(self,transition):
+
+
+    def trigger_transition(self,transition, is_plant=True):
         #takes as input the pair [p,e] from check_transition, triggers p if 
         #it is not failed, and triggers e.
         if transition[0][:4] == "fail":
             pass
         else:
-            self.plant.trigger_transition(transition[0])
-        self.environment.trigger_transition(transition[1])
+            if is_plant:
+                self.plant.trigger_transition(transition[0])
+            else:
+                self.environment.trigger_transition(transition[0])
+        if is_plant:
+            self.environment.trigger_transition(transition[1])
+        else:
+            self.plant.trigger_transition(transition[1])
+
     
     
     
@@ -270,7 +316,7 @@ class plant_environment(System):
         return [plant_action,environment_action]          
     
     
-    def generate_random_execution(self,steps,environment_strategy = None):
+    def generate_random_execution(self,steps,some_strategy = None, is_plant=True):
         #generate an execution of size steps of the compound plant/environment
         #where the plant always chooses randomly its actions among the available ones
         #returns the execution under the form of a list of transitions or failed transitions
@@ -278,15 +324,18 @@ class plant_environment(System):
         execution = []
         for s in range(steps):
             tr = self.random_transition()
-            tr = self.check_transition(tr[0],environment_strategy = environment_strategy)
-            self.trigger_transition(tr)
+            if is_plant:
+                tr = self.check_transition(tr[0],environment_strategy = some_strategy, is_plant_transition=True)
+            else:
+                tr = self.check_transition(tr[0], environment_transition=some_strategy, is_plant_transition=False)
+            self.trigger_transition(tr, is_plant=is_plant)
             execution.append(tr)
         return execution
     
 
 
 
-    def generate_controlled_execution(self,steps,environment_strategy = None,print_probs = False):
+    def generate_controlled_execution(self,steps,environment_strategy = None,print_probs = False, is_plant=True):
         
         #generates an execution where the plant choose its actions according to
         #its associated RNN, without any learning taking place.
@@ -297,23 +346,29 @@ class plant_environment(System):
         #initialization
         execution = []
         dy.renew_cg()
-        state = self.network.initial_state()
+        if is_plant:
+            state = self.network.initial_state()
+        else:
+            state = self.network2.initial_state()
         last_transition = None
         output = []
         
         for step in range(steps):
             
             #giving new input to the LSTM
-            network_input = self.RNN_input(last_transition)
+            network_input = self.RNN_input(last_transition, is_plant=is_plant)
             input_vector = dy.inputVector(network_input)
             state = state.add_input(input_vector)
             
             #computation of the output: the LSTM unit is followed by a linear layer with
             #bias, then the result is passed through a softmax
-            output = dy.softmax(self.R*state.output() + self.bias).value()
+            if is_plant:
+                output = dy.softmax(self.R*state.output() + self.bias).value()
+            else:
+                output = dy.softmax(self.R2*state.output() + self.bias2).value()
             
             #computation of the next action proposed by the plant
-            next_plant_action = self.RNN_output(output,print_probs = print_probs)
+            next_action = self.RNN_output(output,print_probs = print_probs, is_plant=is_plant)
             
             
 # =============================================================================
@@ -324,12 +379,12 @@ class plant_environment(System):
 # =============================================================================
             
             #check transition and compute environment action
-            tr = self.check_transition(next_plant_action,environment_strategy=environment_strategy)
+            tr = self.check_transition(next_action,some_strategy=environment_strategy, is_plant_transition=is_plant)
             if print_probs:
                 print("choice:",tr)
             
             #trigger transitions and complete the execution
-            self.trigger_transition(tr)
+            self.trigger_transition(tr, is_plant=is_plant)
             execution.append(tr)
             last_transition = tr[0]
             
@@ -337,7 +392,7 @@ class plant_environment(System):
 
 
     
-    def generate_training_execution(self,steps,lookahead = 1,lookahead_function = None,environment_strategy = None,print_probs = False,random_exploration = False,random_step = 4,new_loss = True,epsilon = 0,compare_loss = False,discount_loss = False,discount_factor = 1):
+    def generate_training_execution(self,steps,lookahead = 1,lookahead_function = None,environment_strategy = None,print_probs = False,random_exploration = False,random_step = 4,new_loss = True,epsilon = 0,compare_loss = False,discount_loss = False,discount_factor = 1, is_plant=True):
         
         #generates a training execution: an execution is generated, but with a training
         #pass being done at every step
@@ -368,7 +423,10 @@ class plant_environment(System):
 
         #initialization
         execution = []
-        state = self.network.initial_state()
+        if is_plant:
+            state = self.network.initial_state()
+        else:
+            state = self.network2.initial_state()
         last_transition = None
         output = None
         output_value = None
@@ -377,7 +435,11 @@ class plant_environment(System):
         nb_fail = 0
         
         dy.renew_cg()
-        state = self.network.initial_state()
+        if is_plant:
+            state = self.network.initial_state()
+        else:
+            state = self.network2.initial_state()
+
         
         
         loss = [dy.scalarInput(0)]
@@ -387,24 +449,32 @@ class plant_environment(System):
             
             
             #new input for the RNN
-            network_input = self.RNN_input(last_transition)
+            network_input = self.RNN_input(last_transition, is_plant=is_plant)
 
             input_vector = dy.inputVector(network_input)
             state = state.add_input(input_vector)
             
             #computation of the output
-            output = dy.softmax(self.R*state.output() + self.bias)
+            if is_plant:
+                output = dy.softmax(self.R*state.output() + self.bias)
+            else:
+                output = dy.softmax(self.R2*state.output() + self.bias2)
+
             output_value = output.value()
             
             
             #compute the next action for the plant depending on the chosen strategy
             if not random_exploration or step > random_step:
                 if random.random() < epsilon:
-                    next_plant_action = self.random_transition()[0]
+                    next_some_action = self.random_transition()[0]
                 else:
-                    next_plant_action = self.RNN_output(output_value,print_probs = print_probs)
+                    next_some_action = self.RNN_output(output_value,print_probs = print_probs, is_plant=is_plant)
             else:
-                next_plant_action = random.choice(self.plant.available_transitions())
+                if is_plant:
+                    next_some_action = random.choice(self.plant.available_transitions())
+                else:
+                    next_some_action = random.choice(self.environment.available_transitions())
+
             
 # =============================================================================
 #                 if environment_strategy == None:
@@ -414,7 +484,7 @@ class plant_environment(System):
 # =============================================================================
                 
             #check if environment can comply and if not, choose an action for it    
-            tr = self.check_transition(next_plant_action,environment_strategy=environment_strategy)
+            tr = self.check_transition(next_some_action,some_strategy=environment_strategy, is_plant_transition=is_plant)
             
             #update the information for the loss with lookahead: remember the successes and failures
             plant_tr = tr[0]
@@ -429,7 +499,11 @@ class plant_environment(System):
             
             #store information about the output to compute the loss
             if not random_exploration or step > random_step:
-                rollout = rollout_update(rollout,(output,self.plant.available_transitions(),plant_tr))
+                if is_plant:
+                    rollout = rollout_update(rollout,(output,self.plant.available_transitions(),plant_tr))
+                else:
+                    rollout = rollout_update(rollout,(output,self.environment.available_transitions(),plant_tr))
+
             
             
             
@@ -452,9 +526,19 @@ class plant_environment(System):
                         #print(nb_failures,nb_successes)
                         
                         #compute the loss (usually using new_loss, which is the loss described in the paper)
-                        for i in range(len(self.plant.all_transitions)):
-                            if self.plant.all_transitions[i] in rollout[i_train][1]:
-                                if self.plant.all_transitions[i] == rollout[i_train][2]:#chosen action
+                        if is_plant:
+                            my_len = len(self.plant.all_transitions)
+                        else:
+                            my_len = len(self.environment.all_transitions)
+
+                        for i in range(my_len):
+                            if is_plant:
+                                cur_transition=self.plant.all_transitions[i]
+                            else:
+                                cur_transition=self.environment.all_transitions[i]
+
+                            if cur_transition in rollout[i_train][1]:
+                                if cur_transition == rollout[i_train][2]:#chosen action
                                     loss.append((nb_successes/(lookahead+1))*dy.pickneglogsoftmax(rollout[i_train][0],i))
                                     #print(loss[-1].value())
                                     
@@ -466,7 +550,7 @@ class plant_environment(System):
                                 
                                 # Yoav's correction of the loss
                                 else:
-                                    if self.plant.all_transitions[i] != rollout[i_train][2]:#not chosen action
+                                    if cur_transition != rollout[i_train][2]:#not chosen action
                                         loss.append((nb_failures/(lookahead+1))*dy.pickneglogsoftmax(rollout[i_train][0],i))
                                         #print(loss[-1].value())
                                 ###############
@@ -477,8 +561,10 @@ class plant_environment(System):
                     #Do the training pass
                     loss_compute.value()
                     loss_compute.backward()
-                    
-                    self.trainer.update()
+                    if is_plant:
+                        self.trainer.update()
+                    else:
+                        self.trainer2.update()
                     
                     loss = [dy.scalarInput(0)]    
             
@@ -499,9 +585,19 @@ class plant_environment(System):
                         nb_successes = lookahead-nb_failures
                         
                         #compute the loss (usually using new_loss, which is the loss described in the paper)
-                        for i in range(len(self.plant.all_transitions)):
-                            if self.plant.all_transitions[i] in rollout[i_train][1]:
-                                if self.plant.all_transitions[i] == rollout[i_train][2]:#chosen action
+                        if is_plant:
+                            my_len = len(self.plant.all_transitions)
+                        else:
+                            my_len = len(self.environment.all_transitions)
+
+                        for i in range(my_len):
+                            if is_plant:
+                                cur_transition = self.plant.all_transitions[i]
+                            else:
+                                cur_transition = self.environment.all_transitions[i]
+
+                            if cur_transition in rollout[i_train][1]:
+                                if cur_transition == rollout[i_train][2]:#chosen action
                                     loss.append((nb_successes/(lookahead+1))*dy.pickneglogsoftmax(rollout[i_train][0],i))
                                     loss.append(-(nb_failures/(lookahead+1))*dy.pickneglogsoftmax(rollout[i_train][0],i))
                                     
@@ -513,8 +609,10 @@ class plant_environment(System):
                     #Do the training pass
                     loss_compute.value()
                     loss_compute.backward()
-                    
-                    self.trainer.update()
+                    if is_plant:
+                        self.trainer.update()
+                    else:
+                        self.trainer2.update()
                     
                     loss = [dy.scalarInput(0)]    
             
@@ -539,9 +637,19 @@ class plant_environment(System):
                             #print(discounted_failures,discounted_successes)
                         
                         #compute the loss (usually using new_loss, which is the loss described in the paper)
-                        for i in range(len(self.plant.all_transitions)):
-                            if self.plant.all_transitions[i] in rollout[i_train][1]:
-                                if self.plant.all_transitions[i] == rollout[i_train][2]:#chosen action
+                        if is_plant:
+                            my_len = len(self.plant.all_transitions)
+                        else:
+                            my_len = len(self.environment.all_transitions)
+
+                        for i in range(my_len):
+                            if is_plant:
+                                cur_transition = self.plant.all_transitions[i]
+                            else:
+                                cur_transition = self.environment.all_transitions[i]
+
+                            if cur_transition in rollout[i_train][1]:
+                                if cur_transition == rollout[i_train][2]:#chosen action
                                     loss.append((discounted_successes/(lookahead+1))*dy.pickneglogsoftmax(rollout[i_train][0],i))
                                     #print(loss[-1].value())
                                     
@@ -553,7 +661,7 @@ class plant_environment(System):
                                 
                                 # Yoav's correction of the loss
                                 else:
-                                    if self.plant.all_transitions[i] != rollout[i_train][2]:#not chosen action
+                                    if cur_transition != rollout[i_train][2]:#not chosen action
                                         loss.append((discounted_failures/(lookahead+1))*dy.pickneglogsoftmax(rollout[i_train][0],i))
                                         print(loss[-1].value())
                                 ###############
@@ -564,8 +672,11 @@ class plant_environment(System):
                     #Do the training pass
                     loss_compute.value()
                     loss_compute.backward()
-                    
-                    self.trainer.update()
+
+                    if is_plant:
+                        self.trainer.update()
+                    else:
+                        self.trainer2.update()
                     
                     loss = [dy.scalarInput(0)]  
                     
@@ -577,7 +688,15 @@ class plant_environment(System):
             
             
             #to be used when using update_states, not used for now
-            if self.plant.current_state in self.plant.update_states:
+            if is_plant:
+                cur_state = self.plant.current_state
+                update_states= self.plant.update_states
+            else:
+                cur_state = self.environment.current_state
+                update_states= self.environment.update_states
+
+
+            if cur_state in update_states:
                 
                 pass
                 nb_fail = 0

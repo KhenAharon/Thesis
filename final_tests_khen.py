@@ -34,16 +34,24 @@ def count_failures(execution):
     return counter
 
 
-for figure_number in range(2, 3):
+for figure_number in range(1, 2):
     line = ""
+    line2 = ""
+
     results = []
     results_short = []
+    results2 = []
+    results_short2 = []
 
     best = L_C
     best_short = L_C_short
+    best2 = L_C
+    best_short2 = L_C_short
 
     worst = 0
     worst_short = 0
+    worst2 = 0
+    worst_short2 = 0
 
     print("\nFigure", figure_number)
     if figure_number == 1:
@@ -95,40 +103,71 @@ for figure_number in range(2, 3):
                             pve.reinitialize()  # return system and environment to initial states
 
                             # Now we generate a training sequence.
-                            pve.generate_training_execution(length,lookahead = lookahead,epsilon = epsilon,compare_loss = False)
+                            pve.generate_training_execution(length,lookahead = lookahead,epsilon = epsilon,compare_loss = False, is_plant=True)
+                            pve.generate_training_execution(length, lookahead=lookahead, epsilon=epsilon, compare_loss=False, is_plant=False)
 
             failures = []
+            failures2 = []
             failures_short = []
+            failures_short2 = []
 
             for control in range(C):
                 pve.reinitialize()
-                execution = pve.generate_controlled_execution(L_C_short,print_probs = False)
+                execution = pve.generate_controlled_execution(L_C_short,print_probs = False,is_plant=True)
+                execution2 = pve.generate_controlled_execution(L_C_short,print_probs = False,is_plant=False)
+
                 failures_short.append(count_failures(execution))
+                failures_short2.append(count_failures(execution2))
 
             for control in range(C):
                 pve.reinitialize()
-                execution = pve.generate_controlled_execution(L_C,print_probs = False)
+                execution = pve.generate_controlled_execution(L_C,print_probs = False,is_plant=True)
+                execution2 = pve.generate_controlled_execution(L_C,print_probs = False,is_plant=False)
+
                 failures.append(count_failures(execution))
+                failures2.append(count_failures(execution2))
+
 
             percentage = 0
             percentage_short = 0
+            percentage2 = 0
+            percentage_short2 = 0
             for i in range(C):
                 percentage += failures[i]/L_C
                 percentage_short += failures_short[i]/L_C_short
+
+                percentage2 += failures2[i]/L_C
+                percentage_short2 += failures_short2[i]/L_C_short
+
             percentage /= C
             percentage_short /= C
-
+            percentage2 /= C
+            percentage_short2 /= C
+###################################################### HERE
             if percentage > worst:
                 worst = percentage
+            if percentage2 > worst2:
+                worst2 = percentage2
+
             if percentage < best:
                 best = percentage
+            if percentage2 < best2:
+                best2 = percentage2
+
             if percentage_short > worst_short:
                 worst_short = percentage_short
             if percentage_short < best_short:
                 best_short = percentage_short
 
+            if percentage_short2 > worst_short2:
+                worst_short2 = percentage_short2
+            if percentage_short2 < best_short2:
+                best_short2 = percentage_short2
+
             results.append(percentage)
             results_short.append(percentage_short)
+            results2.append(percentage2)
+            results_short2.append(percentage_short2)
             # test number..
 
         # global results for each set of parameters
@@ -137,8 +176,15 @@ for figure_number in range(2, 3):
         add += str(best*100) + " " + str(worst*100) + " " + str(sum(results)/len(results)*100) + " "
         print(add)
         line += add
+
+        add2 = ""
+        add2 += str(best_short2*100) + " " + str(worst_short2*100) + " " + str(sum(results_short2)/len(results_short2)*100) + " "
+        add2 += str(best2*100) + " " + str(worst2*100) + " " + str(sum(results2)/len(results2)*100) + " "
+        print(add2)
+        line2 += add2
     # all global results for each figure
 
+    '''
     # random
     failures = []
     for control in range(C):
@@ -150,9 +196,25 @@ for figure_number in range(2, 3):
         percentage += failures[i]/L_C
     percentage /= C
     line += str(percentage * 100) + " "
+    
+    # random
+    failures2 = []
+    for control in range(C):
+        pve_rand.reinitialize()
+        execution2 = pve_rand.generate_random_execution(L_C)
+        failures2.append(count_failures(execution2))
+    percentage2 = 0
+    for i in range(C):
+        percentage2 += failures2[i]/L_C
+    percentage2 /= C
+    line2 += str(percentage2 * 100) + " "
+    '''
 
     print("***********final***********:\n")
     print(line)
+    print("***********final 2 ***********:\n")
+    print(line2)
+
 
 
 def run(pve, steps = 50, print_first=False, print_probs=False):
